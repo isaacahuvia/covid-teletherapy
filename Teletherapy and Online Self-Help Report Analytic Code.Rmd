@@ -1,0 +1,503 @@
+---
+title: "Teletherapy and Online Self-Help - Updated"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Updated with removal of 4 test responses
+
+```{r, include = F}
+####  Setup  ####
+library(easypackages)
+libraries("tidyverse", "ggplot2", "readr", "magrittr", "Amelia", "scales", "questionr", "corrplot", "knitr", "kableExtra", "conflicted")
+walk(c("filter", "select", "count", "group_by"), ~ conflict_prefer(., "dplyr"))
+
+rm(list = ls())
+
+opts_chunk$set(echo = F, message = F)
+
+
+
+####  Load Data  ####
+raw <- read_rds("G:\\Shared drives\\Psychology_JSLab\\Projects\\In_Progress\\SBU_COVID19_Study\\Clean Data\\SBU COVID-19 Survey - Baseline.rds")
+
+
+
+####  Clean Data  ####
+clean <- raw %>%
+  
+  ## Filter TBD
+  filter(
+    
+    position == 1 #Just undergraduate students
+    
+  ) %>%
+  
+  ## Recode and rename variables as necessary and select these variables for analysis
+  transmute(
+    
+    ## Main analysis
+    interest.selfGuided.cost = selfGuided_cost == 1 | selfGuided_cost == 2, #No %in% operator as we want to maintain NAs
+    interest.selfGuided.free = selfGuided_free == 1 | selfGuided_free == 2,
+    interest.teletherapy.free = teletherapy_free == 1 | teletherapy_free == 2,
+    interest.teletherapy.cost = teletherapy_cost == 1 | teletherapy_cost == 2,
+    age = age,
+    sex = if_else(sex %in% c(1, 2), 2 - sex, NA_real_) %>% #Male or female where female is reference level (0); make intersex NA
+      as.factor(),
+    ethnicity = case_when(race == 1 & hispanic == 0 ~ 1, #White non-hispanic
+                          race == 2 & hispanic == 0 ~ 2, #Black non-hispanic
+                          race == 4 & hispanic == 0 ~ 3, #Asian non-hispanic
+                          hispanic == 1             ~ 4, #Hispanic
+                          T                         ~ 5) %>% #Other
+      as.factor(),
+    # genderMinority = case_when(genderDiff == 0 | sex == (2 - gender) ~ 0,
+    #                            genderDiff == 1 & sex != (2 - gender) ~ 1,
+    #                            T ~ NA_real_) %>%
+    #   as.factor(),
+    sexualMinority = if_else(!is.na(sexualOrientation), sexualOrientation %in% 2:9, NA) %>%
+      as.numeric() %>%
+      as.factor(),
+    
+    GAD_1, GAD_2, GAD_3, GAD_4, GAD_5, GAD_6, GAD_7,
+    GAD7 = GAD_1 + GAD_2 + GAD_3 + GAD_4 + GAD_5 + GAD_6 + GAD_7 - 7, #-7 to account for original coding being off by 1
+    PHQ_1, PHQ_2, PHQ_3, PHQ_4, PHQ_5, PHQ_6, PHQ_7, PHQ_8, PHQ_9,
+    PHQ = PHQ_1 + PHQ_2 + PHQ_3 + PHQ_4 + PHQ_5 + PHQ_6 + PHQ_7 + PHQ_8 + PHQ_9 - 9, #-9 to account for original coding being off by 1
+    
+    ## Exploratory analysis
+    impact = impact.edRemote + impact.jobRemote + impact.jobLoss + impact.extraHours + impact.livingSituation + impact.relativesMovedIn + impact.childcare + impact.shelterInPlace + impact.selfQuarantine + impact.mandQuarantine + impact.hadToWork + impact.reunitedWithFam + impact.illnessOfContact,
+    lostIncome = incomeChange == 1 | incomeChange == 2,
+    social = case_when(socialConnections == 3         ~ 0,
+                       socialConnections %in% c(1, 2) ~ 1,
+                       socialConnections %in% c(4, 5) ~ 2,
+                       T                              ~ NA_real_),
+    barrAfter.cost = barrAfter.cost / 100,
+    barrAfter.availability = barrAfter.avail / 100,
+    barrAfter.logistics = barrAfter.logistics / 100,
+    barrAfter.myself = barrAfter.doItMyself / 100,
+    barrAfter.overwhelmed = barrAfter.overwhelmed / 100,
+    barrAfter.past = barrAfter.pastExperiences / 100,
+    barrAfter.findOut = barrAfter.stigma / 100,
+    barrAfter.notSure = barrAfter.unsureHow / 100,
+    prob.anxiety = probType.anxiety,
+    prob.depression = probType.depression,
+    prob.aggression = probType.aggression,
+    prob.attention = probType.attention,
+    prob.substance = probType.substance,
+    prob.autism = probType.autism,
+    prob.relationship = probType.relationship,
+    prob.trauma = probType.trauma,                            
+    lostTreatment = supportLoss == 1 | supportLoss == 2
+
+  )
+
+before <- nrow(clean)
+
+df <- clean[complete.cases(clean[,1:11]),]
+
+after <- nrow(df)
+```
+
+# Study Overview
+
+This study investigates interest in teletherapy and online self-guided mental health programs in
+the midst of the COVID-19 pandemic among undergraduate students at a large university. The
+goal of this study is to gather evidence on the extent of demand for these services during the
+COVID-19 pandemic, whether it differs by individual characteristics, and whether it differs by the
+characteristics of the services offered. We believe that the findings from this study can inform
+public health decisions regarding the role of teletherapy and online self-help in an effective
+COVID-19 response. Specifically, we seek to answer the following questions:
+
+1. What is the extent of interest in teletherapy and online self-help during the COVID-19
+pandemic among members of a large university community?
+2. Does interest in teletherapy and online self-help differ by (a) sociodemographic factors
+and/or (b) levels of depression and anxiety symptomatology?
+3. Does interest in teletherapy and online self-help vary as a function of cost (i.e. free vs
+$30/session)?
+
+This is an exploratory study and we do not have specific hypotheses regarding the extent of
+interest in teletherapy and online self-help, or whether/how interest differs across the above
+conditions.
+
+Analyses are limited to complete cases only. This drops `r before - after` of `r before` cases.
+
+## Sample Description
+
+```{r}
+out <- data.frame(
+  label = c("Age", "Sex: Female", "Sex: Male", "Ethnicity: White", "Ethnicity: Black", "Ethnicity: Asian", "Ethnicity: Hispanic", "Ethnicity: Other", "Sexual Minority: No", "Sexual Minority: Yes", "GAD", "PHQ"),
+  variable = c("age", rep("sex", 2), rep("ethnicity", 5), rep("sexualMinority", 2), "GAD7", "PHQ"),
+  level = c("", "0", "1", "1", "2", "3", "4", "5", "0", "1", "", ""),
+  n = NA,
+  pct = NA,
+  mean = NA,
+  sd = NA,
+  stringsAsFactors = F
+)
+
+for(i in 1:nrow(out)) {
+  
+  if(out$variable[i] %in% c("age", "GAD7", "PHQ")) {
+  
+    out$n[i] <- sum(!is.na(df[[out$variable[i]]]))
+    out$mean[i] <- mean(df[[out$variable[i]]])
+    out$sd[i] <- sd(df[[out$variable[i]]])
+  
+  }
+  
+  if(out$variable[i] %in% c("sex", "ethnicity", "sexualMinority")) {
+    
+    out$n[i] <- sum(df[[out$variable[i]]] == out$level[i])
+    out$pct[i] <- sum(df[[out$variable[i]]] == out$level[i]) / sum(!is.na(df[[out$variable[i]]]))
+
+  }
+  
+}
+
+out %>%
+  mutate(label = gsub(".*:\\s", "", label),
+         pct = percent(pct),
+         mean_sd = paste0(round(mean, 2), " (", round(sd, 2), ")")) %>%
+  select(label, n, pct, mean_sd) %>%
+  kable(col.names = c("Variable", "n", "Proportion", "Mean (sd)"), align = "l") %>%
+  column_spec(2, width = ".5in") %>%
+  kableExtra::group_rows("Sex", 2, 3) %>%
+  kableExtra::group_rows("Ethnicity", 4, 8) %>%
+  kableExtra::group_rows("Sexual Minority", 9, 10) %>%
+  kable_styling()
+```
+
+## Internal consistency
+
+```{r}
+df %>%
+  select(GAD_1:GAD_7) %>%
+  psych::alpha()
+
+df %>%
+  select(PHQ_1:PHQ_9) %>%
+  psych::alpha()
+```
+
+# Primary Analyses
+
+## Logistic Regression
+
+P-values in this table are adjusted via Holm-Bonferroni method. Confidence intervals in subsequent plots aren't.
+
+```{r}
+out <- data.frame(
+  label = c("All", "Age", "Sex: Female", "Sex: Male", "Ethnicity: White", "Ethnicity: Black", "Ethnicity: Asian", "Ethnicity: Hispanic", "Ethnicity: Other", "Sexual Minority: No", "Sexual Minority: Yes", "GAD", "PHQ"),
+  variable = c("", "age", rep("sex", 2), rep("ethnicity", 5), rep("sexualMinority", 2), "GAD7", "PHQ"),
+  level = c("", "", "0", "1", "1", "2", "3", "4", "5", "0", "1", "", ""),
+  n = NA,
+  stringsAsFactors = F
+)
+
+outcomes <- c("interest.selfGuided.cost", "interest.teletherapy.cost", "interest.selfGuided.free", "interest.teletherapy.free")
+
+for(i in 1:nrow(out)) {
+  
+  if(out$label[i] == "All") out$n[i] <- nrow(df)
+  if(out$variable[i] %in% c("age", "GAD7", "PHQ")) out$n[i] <- sum(!is.na(df[[out$variable[i]]]))
+  if(out$variable[i] %in% c("sex", "ethnicity", "sexualMinority")) out$n[i] <- sum(df[[out$variable[i]]] == out$level[i])
+  
+}
+
+for(outcome in outcomes) {
+  
+  model <- glm(data = df,
+               family = "binomial",
+               formula = as.formula(paste0(outcome, " ~ age + sex + ethnicity + sexualMinority + GAD7 + PHQ")))
+  
+  coef <- odds.ratio(model) %>%
+    as.data.frame() %>%
+    rownames_to_column("label") %>%
+    mutate(p = p.adjust(p, "holm"),
+           formattedEst = case_when(T  ~ paste0(round(OR, 2), "* (p=", round(p, 3), ")")))
+                                    # p < .05  ~ paste0(round(OR, 2), "* (p=", round(p, 3), ")"),
+                                    # T        ~ as.character(round(OR, 2))))
+  
+  out[[paste0(outcome, ".pct")]] <- NA
+  out[[paste0(outcome, ".OR")]] <- NA
+  
+  out[[paste0(outcome, ".pct")]][out$label == "All"] <- percent(mean(df[[outcome]]))
+  
+  for(i in 2:nrow(out)) {
+    
+    variable <- out$variable[i]
+    level <- out$level[i]
+    
+    out[[paste0(outcome, ".pct")]][i] <- paste0(percent(mean(df[[outcome]][df[[variable]] == level])))
+    
+    if(paste0(variable, level) %in% coef$label) out[[paste0(outcome, ".OR")]][i] <- coef$formattedEst[coef$label == paste0(variable, level)]
+    
+  }
+  
+}
+
+out %>%
+  select(-variable, -level) %>%
+  mutate(label = gsub(".*:\\s", "", label)) %>%
+  kable(col.names = c("Variable", "n", rep(c("Percent\nInterested", "Odds Ratio"), 4)), align = "l") %>%
+  add_header_above(c(" " = 2, "Self Guided (Cost)" = 2, "Teletherapy (Cost)" = 2, "Self Guided (Free)" = 2, "Teletherapy (Free)" = 2)) %>%
+  column_spec(2, width = ".5in") %>%
+  kableExtra::group_rows("Sex", 3, 4) %>%
+  kableExtra::group_rows("Ethnicity", 5, 9) %>%
+  kableExtra::group_rows("Sexual Minority", 10, 11) %>%
+  kable_styling() %>%
+  add_footnote(c("Odds ratios and significance flags are calculated in reference to the reference category for each variable", "Minimum sample size per cell for reporting odds ratios is 10, per pre-analysis plan", "p-values are adjusted via Holm-Bonferroni method"))
+```
+
+Notes on variable coding:
+
+- For ethnicity, of the 63 "other," 55 are more than one race and 8 are other racial categories
+- For age, there is a wide range, but limiting the age range doesn't change the results here
+
+## Plot
+
+All predictors are either binary or, where indicated, z-scored
+
+Confidence intervals are not adjusted for multiple comparisons
+
+```{r}
+zScore <- function(x) {
+  
+  mean <- mean(x, na.rm = T)
+  sd = sd(x, na.rm = T)
+  
+  x <- (x - mean) / sd
+  
+  return(x)
+  
+}
+
+out.plot <- map(outcomes,
+                ~ glm(data = df %>%
+                        mutate(age = zScore(age),
+                               GAD7 = zScore(GAD7),
+                               PHQ = zScore(PHQ)),
+                      family = "binomial",
+                      formula = as.formula(paste0(., " ~ age + sex + ethnicity + sexualMinority + GAD7 + PHQ"))) %>%
+                  odds.ratio(level = .9) %>%
+                  as.data.frame() %>%
+                  rownames_to_column("label") %>%
+                  select(label, est = OR, lower = `5 %`, upper = `95 %`)) %>%
+  set_names(outcomes) %>%
+  bind_rows(.id = "model") %>%
+  mutate(model = case_when(model == "interest.selfGuided.cost" ~ "Self Guided (Cost)",
+                           model == "interest.teletherapy.cost" ~ "Teletherapy (Cost)",
+                           model == "interest.selfGuided.free" ~ "Self Guided (Free)",
+                           model == "interest.teletherapy.free" ~ "Teletherapy (Free)") %>%
+           factor(levels = unique(.)),
+         label = case_when(label == "age" ~ "Age (z-score)",
+                           label == "sex1" ~ "Sex: Male",
+                           label == "ethnicity2" ~ "Ethnicity: Black",
+                           label == "ethnicity3" ~ "Ethnicity: Asian",
+                           label == "ethnicity4" ~ "Ethnicity: Hispanic",
+                           label == "ethnicity5" ~ "Ethnicity: Other",
+                           label == "genderMinority1" ~ "Gender Minority",
+                           label == "sexualMinority1" ~ "Sexual Minority",
+                           label == "GAD7" ~ "GAD7 (z-score)",
+                           label == "PHQ" ~ "PHQ (z-score)",
+                           T ~ label) %>%
+           factor(levels = rev(unique(.))))
+
+out.plot %>%
+  ggplot() +
+    geom_boxplot(aes(y = label, xmiddle = est, xlower = est, xupper = est, xmin = lower, xmax = upper, color = model), stat = "identity") +
+    geom_vline(xintercept = 1) +
+    scale_color_discrete(name = "DV", guide = guide_legend(reverse = T)) +
+    coord_cartesian(xlim = c(0, 4)) +
+    scale_y_discrete(name = NULL) +
+    theme_classic() +
+    ggtitle("Odds Ratios")
+```
+
+# Appendix
+
+## Exploratory Logistic Regressions
+
+Confidence intervals are not adjusted for multiple comparisons
+
+```{r, fig.height = 8.5}
+out.plot <- map(outcomes,
+                ~ glm(data = df[complete.cases(df),] %>%
+                        mutate(GAD7 = zScore(GAD7),
+                               PHQ = zScore(PHQ),
+                               impact = zScore(impact)),
+                      family = "binomial",
+                      formula = as.formula(paste0(., " ~ ", paste0(names(df)[5:30], collapse = " + ")))) %>%
+                  odds.ratio(level = .9) %>%
+                  as.data.frame() %>%
+                  rownames_to_column("label") %>%
+                  select(label, est = OR, lower = `5 %`, upper = `95 %`)) %>%
+  set_names(outcomes) %>%
+  bind_rows(.id = "model") %>%
+  mutate(model = case_when(model == "interest.selfGuided.cost" ~ "Self Guided (Cost)",
+                           model == "interest.teletherapy.cost" ~ "Teletherapy (Cost)",
+                           model == "interest.selfGuided.free" ~ "Self Guided (Free)",
+                           model == "interest.teletherapy.free" ~ "Teletherapy (Free)") %>%
+           factor(levels = unique(.)),
+         label = case_when(label == "age" ~ "Age",
+                           label == "sex1" ~ "Sex: Male",
+                           label == "ethnicity2" ~ "Ethnicity: Black",
+                           label == "ethnicity3" ~ "Ethnicity: Asian",
+                           label == "ethnicity4" ~ "Ethnicity: Hispanic",
+                           label == "ethnicity5" ~ "Ethnicity: Other",
+                           label == "sexualMinority1" ~ "Sexual Minority",
+                           label == "GAD7" ~ "GAD7 (z-score)",
+                           label == "PHQ" ~ "PHQ (z-score)",
+                           label == "impact" ~ "COVID-19 Impact (z-score)",
+                           T ~ label) %>%
+           factor(levels = rev(unique(.))))
+
+out.plot %>%
+  ggplot() +
+    geom_boxplot(aes(y = label, xmiddle = est, xlower = est, xupper = est, xmin = lower, xmax = upper, color = model), stat = "identity") +
+    geom_vline(xintercept = 1) +
+    scale_color_discrete(name = "DV", guide = guide_legend(reverse = T)) +
+    coord_cartesian(xlim = c(0, 4)) +
+    scale_y_discrete(name = NULL) +
+    theme_classic() +
+    ggtitle("Odds Ratios - Exploratory Predictors")
+```
+
+## Interest by Ethnicity
+
+### Overall 
+
+```{r}
+df %>%
+  select_at(vars("ethnicity", matches("^interest."))) %>%
+  pivot_longer(interest.selfGuided.cost:interest.teletherapy.cost) %>%
+  group_by(ethnicity, name) %>%
+  summarize(pct = mean(value)) %>%
+  ggplot() +
+    geom_bar(aes(name, pct, fill = ethnicity), stat = "identity", position = "dodge") +
+    scale_fill_discrete(name = "Ethnicity", 
+                        labels = c("1" = "White",
+                                   "2" = "Black",
+                                   "3" = "Asian", 
+                                   "4" = "Hispanic",
+                                   "5" = "Other")) +
+    scale_x_discrete(name = NULL, 
+                     limits = c("interest.selfGuided.cost", 
+                                "interest.teletherapy.cost", 
+                                "interest.selfGuided.free", 
+                                "interest.teletherapy.free"),
+                     labels = c("interest.selfGuided.cost" = "Self-Guided (Cost)",
+                                "interest.selfGuided.free" = "Self-Guided (Free)",
+                                "interest.teletherapy.cost" = "Teletherapy (Cost)",
+                                "interest.teletherapy.free" = "Teletherapy (Free)")) +
+    scale_y_continuous(name = "Percent Interested", label = scales::percent)
+```
+
+### Post-hoc Comparison: Self-Guided vs Teletherapy at Cost by Race
+
+```{r}
+for(i in 1:5) {
+  
+  print(i)
+  
+  temp <- df[df$ethnicity == i,]
+  
+  temp %>%
+    count(teletherapy = interest.teletherapy.cost, selfGuided = interest.selfGuided.cost) %>%
+    pivot_wider(names_from = selfGuided,
+                names_prefix = "selfGuided",
+                values_from = n) %>%
+    print()
+  
+  mcnemar.test(temp$interest.teletherapy.cost, temp$interest.selfGuided.cost) %>%
+    print()
+  
+}
+```
+
+## Preferences by Service Type
+
+### Correlations Between Preferences
+
+```{r}
+matrix <- select(df,
+                 `Self-Guided (Cost)` = interest.selfGuided.cost,
+                 `Teletherapy (Cost)` = interest.teletherapy.cost,
+                 `Self-Guided (Free)` = interest.selfGuided.free,
+                 `Teletherapy (Free)` = interest.teletherapy.free) %>%
+  mutate_all(as.numeric)
+corTest <- cor.mtest(matrix)
+matrix %>%
+  cor(use = "pairwise.complete.obs") %>%
+  corrplot(method = "color", 
+           type = "upper", 
+           insig = "label_sig", 
+           tl.col = "black",
+           tl.srt = 45,  
+           addCoef.col = "black")
+```
+
+All correlations are significant at p < .01
+
+### Participants by Interest in Each Service
+
+```{r}
+df %>%
+  group_by(interest.selfGuided.cost, interest.teletherapy.cost, interest.selfGuided.free, interest.teletherapy.free) %>%
+  summarise(n = n(),
+            pct = scales::percent(n() / nrow(.))) %>%
+  mutate_at(vars(matches("interest.")),
+            ~ if_else(. == T, "Interested", "Not Intersted")) %>%
+  rename(`Self-Guided (Cost)` = interest.selfGuided.cost,
+         `Teletherapy (Cost)` = interest.teletherapy.cost,
+         `Self-Guided (Free)` = interest.selfGuided.free,
+         `Teletherapy (Free)` = interest.teletherapy.free) %>%
+  arrange(-n) %>%
+  kable(align = "l") %>%
+  kable_styling()
+```
+
+### Participant Demographics by Interest
+
+For the three largest groups identified in the table above: participants who were interested in all services, participants who weren't interested in any of the services, and participants who were interested in only the free services.
+
+```{r}
+df %>%
+  mutate(interest = case_when(interest.selfGuided.cost == F &
+                              interest.teletherapy.cost == F &
+                              interest.selfGuided.free == T & 
+                              interest.teletherapy.free == T ~ "Free Services Only",
+                              interest.selfGuided.cost == T &
+                              interest.teletherapy.cost == T &
+                              interest.selfGuided.free == T & 
+                              interest.teletherapy.free == T ~ "All Services",
+                              interest.selfGuided.cost == F &
+                              interest.teletherapy.cost == F &
+                              interest.selfGuided.free == F & 
+                              interest.teletherapy.free == F ~ "No Services",
+                              T ~ "Other")) %>%
+  group_by(interest) %>%
+  summarize(n = n(),
+            prop = n / nrow(.),
+            age = mean(age),
+            male = mean(sex == 1),
+            white = mean(ethnicity == 1),
+            black = mean(ethnicity == 2),
+            asian = mean(ethnicity == 3),
+            hispanic = mean(ethnicity == 4),
+            other = mean(ethnicity == 5),
+            sexualMinority = mean(as.numeric(sexualMinority), na.rm = T),
+            GAD = mean(GAD7),
+            PHQ = mean(PHQ)) %>%
+  pivot_longer(n:PHQ, "Variable") %>%
+  pivot_wider(names_from = interest, values_from = value) %>%
+  kable(digits = 2) %>%
+  add_header_above(c(" " = 1, "Respondent interested in..." = 4)) %>%
+  kable_styling()
+```
+
+## Missing Data
+
+```{r}
+missmap(clean)
+```
