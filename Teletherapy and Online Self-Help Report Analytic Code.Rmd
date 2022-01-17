@@ -219,14 +219,14 @@ for(outcome in outcomes) {
   out[[paste0(outcome, ".pct")]] <- NA
   out[[paste0(outcome, ".OR")]] <- NA
   
-  out[[paste0(outcome, ".pct")]][out$label == "All"] <- percent(mean(df[[outcome]]))
+  out[[paste0(outcome, ".pct")]][out$label == "All"] <- percent(mean(df[[outcome]]), accuracy = .01)
   
   for(i in 2:nrow(out)) {
     
     variable <- out$variable[i]
     level <- out$level[i]
     
-    out[[paste0(outcome, ".pct")]][i] <- paste0(percent(mean(df[[outcome]][df[[variable]] == level])))
+    out[[paste0(outcome, ".pct")]][i] <- paste0(percent(mean(df[[outcome]][df[[variable]] == level]), accuracy = .01))
     
     if(paste0(variable, level) %in% coef$label) out[[paste0(outcome, ".OR")]][i] <- coef$formattedEst[coef$label == paste0(variable, level)]
     
